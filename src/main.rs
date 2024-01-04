@@ -1,4 +1,6 @@
-use std::{collections::VecDeque, process::exit, time::Instant};
+use std::{
+    cell::RefCell, collections::VecDeque, process::exit, rc::Rc, time::Instant,
+};
 
 use macroquad::{
     prelude::{is_key_down, Color, KeyCode, GREEN, RED},
@@ -7,6 +9,11 @@ use macroquad::{
 };
 
 use rand::{self, Rng};
+
+trait Scene {
+    fn update(&mut self);
+    fn draw(&self, renderer: &Renderer);
+}
 
 const GRID_WIDTH: f32 = 20.;
 const GRID_HEIGHT: f32 = 20.;
@@ -27,48 +34,34 @@ struct Position {
     y: i32,
 }
 
-struct GameState {
+struct GameOver {}
+
+impl Scene for GameOver {
+    fn update(&mut self) {}
+
+    fn draw(&self, _renderer: &Renderer) {
+        todo!()
+    }
+}
+
+struct Menu {}
+
+impl Scene for Menu {
+    fn update(&mut self) {}
+
+    fn draw(&self, _renderer: &Renderer) {
+        todo!()
+    }
+}
+
+struct GameScene {
     direction: Direction,
     bodyparts: VecDeque<Position>,
     last_tick: Instant,
     head_position: Position,
     fruit_location: Position,
 }
-
-impl GameState {
-    fn new() -> Self {
-        let head_x = (GRID_WIDTH / 2_f32) as i32;
-        let head_y = (GRID_HEIGHT / 2_f32) as i32;
-
-        let mut bodyparts = VecDeque::new();
-        bodyparts.push_back(Position {
-            x: head_x,
-            y: head_y,
-        });
-
-        let head_pos = Position {
-            x: head_x,
-            y: head_y,
-        };
-
-        let fruit_location = Self::new_fruit();
-
-        Self {
-            direction: Direction::Up,
-            bodyparts,
-            last_tick: Instant::now(),
-            head_position: head_pos,
-            fruit_location,
-        }
-    }
-
-    fn new_fruit() -> Position {
-        let x = rand::thread_rng().gen_range(0..GRID_WIDTH as i32 - 1);
-        let y = rand::thread_rng().gen_range(0..GRID_HEIGHT as i32 - 1);
-
-        Position { x, y }
-    }
-
+impl Scene for GameScene {
     fn update(&mut self) {
         self.handle_input();
 
@@ -108,6 +101,49 @@ impl GameState {
         }
     }
 
+    fn draw(&self, renderer: &Renderer) {
+        for bp in self.bodyparts.iter(){
+            renderer.draw_bodypart(bp);
+        }
+
+        renderer.draw_fruit(&self.fruit_location);
+    }
+}
+
+impl GameScene {
+    fn new() -> Self {
+        let head_x = (GRID_WIDTH / 2_f32) as i32;
+        let head_y = (GRID_HEIGHT / 2_f32) as i32;
+
+        let mut bodyparts = VecDeque::new();
+        bodyparts.push_back(Position {
+            x: head_x,
+            y: head_y,
+        });
+
+        let head_pos = Position {
+            x: head_x,
+            y: head_y,
+        };
+
+        let fruit_location = Self::new_fruit();
+
+        Self {
+            direction: Direction::Up,
+            bodyparts,
+            last_tick: Instant::now(),
+            head_position: head_pos,
+            fruit_location,
+        }
+    }
+
+    fn new_fruit() -> Position {
+        let x = rand::thread_rng().gen_range(0..GRID_WIDTH as i32 - 1);
+        let y = rand::thread_rng().gen_range(0..GRID_HEIGHT as i32 - 1);
+
+        Position { x, y }
+    }
+
     fn handle_input(&mut self) {
         if is_key_down(KeyCode::W) && self.direction != Direction::Down {
             self.direction = Direction::Up;
@@ -128,28 +164,45 @@ impl GameState {
 }
 
 struct Game {
-    gamestate: GameState,
     renderer: Renderer,
+    scenes: Vec<Rc<RefCell<dyn Scene>>>,
+    active_scene: Option<Rc<RefCell<dyn Scene>>>,
 }
 
 impl Game {
     fn new() -> Self {
         Game {
-            gamestate: GameState::new(),
             renderer: Renderer::new(),
+            scenes: Vec::new(),
+            active_scene: None,
         }
     }
 
     fn update(&mut self) {
-        self.gamestate.update();
+        let scene = match &self.active_scene {
+            Some(scene) => scene.try_borrow_mut(),
+            None => panic!("`update` called without an active scene"),
+        };
+
+        match scene {
+            Ok(mut scene) => scene.update(),
+            Err(_) => panic!("Failed to borrow Scene"),
+        }
     }
 
     fn draw(&self) {
-        for bp in &self.gamestate.bodyparts {
-            self.renderer.draw_bodypart(bp);
+        match &self.active_scene{
+            Some(s) => s.borrow().draw(&self.renderer), 
+            None => panic!("`draw` called without active scene."),
         }
+    }
 
-        self.renderer.draw_fruit(&self.gamestate.fruit_location);
+    fn add_scene(&mut self, scene: Rc<RefCell<dyn Scene>>){
+        self.scenes.push(scene);
+    }
+
+    fn set_scene(&mut self, index: usize){
+        self.active_scene = Some(Rc::clone(&self.scenes[index]));
     }
 }
 
@@ -220,6 +273,14 @@ fn get_conf() -> macroquad::window::Conf {
 #[macroquad::main(get_conf)]
 async fn main() {
     let mut game = Game::new();
+
+    let gamescene = GameScene::new(); 
+    let gamescene = RefCell::new(gamescene);
+    let gamescene = Rc::new(gamescene);
+
+    game.add_scene(gamescene);
+
+    game.set_scene(0);
 
     loop {
         game.update();
