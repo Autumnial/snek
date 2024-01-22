@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 use core::panic;
 use std::{
     cell::RefCell, collections::VecDeque, process::exit, rc::Rc, time::Instant,
